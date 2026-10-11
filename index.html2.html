@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Registro de Ponto Inteligente</title>
+  <!-- Biblioteca OCR no navegador -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #f3f4f6; margin: 0; padding: 16px; color: #1f2937; }
+    .container { max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 1.4rem; text-align: center; margin-bottom: 16px; color: #111827; }
+    .card { background: #ffffff; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    
+    /* Botão de upload/câmera */
+    .btn-camera {
+      display: block; width: 100%; text-align: center; padding: 14px;
+      background: #2563eb; color: #ffffff; border: none; border-radius: 8px;
+      font-size: 1rem; font-weight: 600; cursor: pointer; text-decoration: none;
+    }
+    input[type="file"] { display: none; }
+    
+    /* Preview e status */
+    #preview { max-width: 100%; height: auto; max-height: 220px; border-radius: 8px; display: none; margin: 12px auto 0; object-fit: contain; }
+    #status { text-align: center; font-size: 0.9rem; color: #6b7280; margin-top: 8px; font-weight: 500; }
+    
+    /* Formulário */
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-top: 10px; margin-bottom: 4px; color: #374151; }
+    input, select, textarea {
+      width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.95rem;
+    }
+    
+    /* Tags de observação */
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .tag {
+      background: #e5e7eb; border: none; padding: 6px 10px; border-radius: 16px;
+      font-size: 0.8rem; cursor: pointer; transition: 0.2s;
+    }
+    .tag:hover { background: #d1d5db; }
+    
+    .btn-save {
+      width: 100%; padding: 12px; background: #059669; color: white; border: none;
+      border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; margin-top: 14px;
+    }
+    
+    /* Lista de Histórico */
+    .registro-item {
+      display: flex; gap: 12px; border-bottom: 1px solid #e5e7eb; padding: 12px 0; align-items: flex-start;
+    }
+    .registro-item:last-child { border-bottom: none; }
+    .registro-img { width: 55px; height: 55px; border-radius: 6px; object-fit: cover; background: #e5e7eb; }
+    .registro-info { flex: 1; font-size: 0.9rem; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 0.75rem; font-weight: bold; background: #dbeafe; color: #1e40af;
+    }
+    .obs-text { font-size: 0.8rem; color: #b45309; background: #fef3c7; padding: 4px 6px; border-radius: 4px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>Controle de Ponto</h1>
+
+    <!-- Card de Captura -->
+    <div class="card">
+      <label for="cameraInput" class="btn-camera">📸 Tirar Foto do Comprovante</label>
+      <input type="file" id="cameraInput" accept="image/*" capture="environment" />
+      
+      <img id="preview" alt="Prévia do comprovante" />
+      <div id="status"></div>
+
+      <!-- Formulário de Confirmação -->
+      <div id="formSection" style="display: none; margin-top: 14px;">
+        <label>Tipo de Registro:</label>
+        <select id="tipoPonto">
+          <option value="Entrada">Entrada</option>
+          <option value="Saída Intervalo">Saída Intervalo</option>
+          <option value="Retorno Intervalo">Retorno Intervalo</option>
+          <option value="Saída">Saída</option>
+        </select>
+
+        <label>Data:</label>
+        <input type="date" id="dataPonto" />
+
+        <label>Horário Lido:</label>
+        <input type="time" id="horaPonto" />
+
+        <label>Observação / Justificativa (Opcional):</label>
+        <div class="tags">
+          <button type="button" class="tag" onclick="adicionarTag('Consulta médica')">🩺 Consulta Médica</button>
+          <button type="button" class="tag" onclick="adicionarTag('Serviço externo')">🚗 Serviço Externo</button>
+          <button type="button" class="tag" onclick="adicionarTag('Saída antecipada autorizada')">✅ Saída Autorizada</button>
+        </div>
+        <textarea id="observacao" rows="2" placeholder="Ex.: Saí mais cedo para ir ao médico..."></textarea>
+
+        <button class="btn-save" onclick="salvarRegistro()">Salvar Ponto</button>
+      </div>
+    </div>
+
+    <!-- Histórico de Registros -->
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <h2 style="font-size: 1.1rem; margin: 0;">Histórico Salvo</h2>
+        <button onclick="limparHistorico()" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.8rem;">Limpar</button>
+      </div>
+      <div id="historicoLista">Nenhum registro ainda.</div>
+    </div>
+  </div>
+
+  <script>
+    let imagemBase64 = '';
+
+    // Ouvinte para captura de foto
+    document.getElementById('cameraInput').addEventListener('change', async function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const preview = document.getElementById('preview');
+      const status = document.getElementById('status');
+      const formSection = document.getElementById('formSection');
+
+      // Mostrar foto prévia
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        imagemBase64 = event.target.result;
+        preview.src = imagemBase64;
+        preview.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
+
+      status.innerText = "Lendo texto do comprovante via OCR... Aguarde.";
+      formSection.style.display = 'none';
+
+      try {
+        // Processamento OCR
+        const { data: { text } } = await Tesseract.recognize(file, 'por');
+        status.innerText = "Leitura concluída! Verifique os dados abaixo.";
+        formSection.style.display = 'block';
+
+        // Tentar extrair Data (DD/MM/AAAA ou DD/MM/AA)
+        const matchData = text.match(/(\d{2})[\/\.-](\d{2})[\/\.-](\d{2,4})/);
+        if (matchData) {
+          let ano = matchData[3].length === 2 ? '20' + matchData[3] : matchData[3];
+          document.getElementById('dataPonto').value = `${ano}-${matchData[2]}-${matchData[1]}`;
+        } else {
+          document.getElementById('dataPonto').value = new Date().toISOString().split('T')[0];
+        }
+
+        // Tentar extrair Hora (HH:MM ou HHhMM)
+        const matchHora = text.match(/(\d{2})[:hH](\d{2})/);
+        if (matchHora) {
+          document.getElementById('horaPonto').value = `${matchHora[1]}:${matchHora[2]}`;
+        } else {
+          const now = new Date();
+          document.getElementById('horaPonto').value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        }
+
+      } catch (err) {
+        status.innerText = "Não foi possível ler o texto automaticamente. Preencha manualmente.";
+        formSection.style.display = 'block';
+        document.getElementById('dataPonto').value = new Date().toISOString().split('T')[0];
+      }
+    });
+
+    function adicionarTag(texto) {
+      const campo = document.getElementById('observacao');
+      campo.value = campo.value ? `${campo.value} | ${texto}` : texto;
+    }
+
+    function salvarRegistro() {
+      const ponto = {
+        id: Date.now(),
+        tipo: document.getElementById('tipoPonto').value,
+        data: document.getElementById('dataPonto').value,
+        hora: document.getElementById('horaPonto').value,
+        observacao: document.getElementById('observacao').value,
+        foto: imagemBase64
+      };
+
+      const registros = JSON.parse(localStorage.getItem('pontos_salvos') || '[]');
+      registros.unshift(ponto);
+      localStorage.setItem('pontos_salvos', JSON.stringify(registros));
+
+      // Resetar formulário
+      document.getElementById('formSection').style.display = 'none';
+      document.getElementById('preview').style.display = 'none';
+      document.getElementById('status').innerText = 'Ponto salvo com sucesso!';
+      document.getElementById('observacao').value = '';
+      document.getElementById('cameraInput').value = '';
+
+      carregarHistorico();
+    }
+
+    function carregarHistorico() {
+      const registros = JSON.parse(localStorage.getItem('pontos_salvos') || '[]');
+      const lista = document.getElementById('historicoLista');
+
+      if (registros.length === 0) {
+        lista.innerHTML = '<span style="color: #9ca3af; font-size: 0.9rem;">Nenhum ponto registrado ainda.</span>';
+        return;
+      }
+
+      lista.innerHTML = registros.map(r => `
+        <div class="registro-item">
+          ${r.foto ? `<img src="${r.foto}" class="registro-img" alt="Recibo" />` : ''}
+          <div class="registro-info">
+            <div>
+              <span class="badge">${r.tipo}</span>
+              <strong>${r.hora}</strong> - <span>${r.data.split('-').reverse().join('/')}</span>
+            </div>
+            ${r.observacao ? `<div class="obs-text">📝 ${r.observacao}</div>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function limparHistorico() {
+      if (confirm('Deseja apagar todos os registros salvos?')) {
+        localStorage.removeItem('pontos_salvos');
+        carregarHistorico();
+      }
+    }
+
+    // Carregar na inicialização
+    carregarHistorico();
+  </script>
+</body>
+</html>
